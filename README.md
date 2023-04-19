@@ -80,5 +80,7 @@ python run.py --eval_only --no_saving --no_tb --problem pdtspl --graph_size 100 
 
 Run ```python run.py -h``` for detailed help on the meaning of each argument.
 
+Datasets for validation and pre-trained model can be found in [release](https://github.com/dtkon/PDP-NCS/releases) of this repos.
+
 ## Acknowledgements
 The code and the framework are derived from the repos [yining043/PDP-N2S](https://github.com/yining043/PDP-N2S).
