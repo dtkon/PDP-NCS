@@ -71,6 +71,7 @@ class MultiHeadAttention(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
         v: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
         with_norm: bool = False,
     ) -> torch.Tensor:
 
@@ -105,6 +106,11 @@ class MultiHeadAttention(nn.Module):
 
         # Calculate compatibility (n_heads, batch_size, n_query, n_key)
         compatibility = torch.matmul(Q, K.transpose(2, 3))
+
+        if mask is not None:
+            mask = mask[None, :, None, :] # (batch_size, n_key)
+            mask = mask.repeat(self.n_heads, 1, n_query, 1) # (n_heads, batch_size, n_query, n_key)
+            compatibility[mask] = -1e20
 
         if v is None and not with_norm:
             return compatibility
@@ -1207,13 +1213,14 @@ class ConstructDecoder(nn.Module):
         last_step = torch.argwhere(part_sol == 0)[:, 1]
         context_emb = torch.cat((h_mean, h_fea[arange, last_step, :]), -1).unsqueeze(1)
 
-        hc = self.first_MHA(context_emb, h_fea, h_fea)
+        mask = self._get_mask(part_sol, init_sol, stack)
+
+        hc = self.first_MHA(context_emb, h_fea, h_fea, mask=mask)
         uc = (
             torch.tanh(self.second_SHA_score(hc, h_fea, with_norm=True)) * self.C
         ).view(batch_size, -1)
         uc /= temperature
-
-        mask = self._get_mask(part_sol, init_sol, stack)
+        
         uc[mask] = -1e20
 
         prob = F.softmax(uc, dim=-1)
