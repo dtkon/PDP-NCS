@@ -183,6 +183,7 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
         type_select: str,
         embedding_type: str,
         attn_type: str,
+        use_lifo_decoder: bool
     ) -> None:
         super().__init__()
 
@@ -205,7 +206,7 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
             )
         )
         self.decoder = ConstructDecoder(
-            n_heads, embedding_dim, self.stack_is_lifo, type_select
+            n_heads, embedding_dim, self.stack_is_lifo, type_select, use_lifo_decoder
         )
 
         self.init_parameters()

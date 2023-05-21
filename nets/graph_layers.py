@@ -1178,7 +1178,8 @@ class ConstructEncoder(nn.Module):
 
 class ConstructDecoder(nn.Module):
     def __init__(
-        self, n_heads: int, input_dim: int, stack_is_lifo: bool, type_select: str
+        self, n_heads: int, input_dim: int, stack_is_lifo: bool, type_select: str,
+        use_lifo_decoder: bool = False
     ) -> None:
         super().__init__()
 
@@ -1186,9 +1187,17 @@ class ConstructDecoder(nn.Module):
         self.stack_is_lifo = stack_is_lifo
         self.type_select = type_select
 
-        self.first_MHA = MultiHeadAttention(
-            n_heads, 2 * input_dim, input_dim, input_dim, input_dim
-        )
+        self.use_lifo_decoder = use_lifo_decoder
+
+        if stack_is_lifo and use_lifo_decoder:
+            self.first_MHA = MultiHeadAttention(
+                n_heads, 3 * input_dim, input_dim, input_dim, input_dim
+            )
+        else:
+            self.first_MHA = MultiHeadAttention(
+                n_heads, 2 * input_dim, input_dim, input_dim, input_dim
+            )
+
         self.second_SHA_score = MultiHeadAttention(
             1, input_dim, input_dim, None, input_dim
         )
@@ -1211,7 +1220,16 @@ class ConstructDecoder(nn.Module):
         arange = torch.arange(batch_size)
 
         last_step = torch.argwhere(part_sol == 0)[:, 1]
-        context_emb = torch.cat((h_mean, h_fea[arange, last_step, :]), -1).unsqueeze(1)
+
+        if self.stack_is_lifo and self.use_lifo_decoder:
+            stack_top = stack.max(1)[1]
+            context_emb = torch.cat(
+                (h_mean, h_fea[arange, last_step, :], h_fea[arange, stack_top, :]), -1
+            ).unsqueeze(1)
+        else:
+            context_emb = torch.cat(
+                (h_mean, h_fea[arange, last_step, :]), -1
+            ).unsqueeze(1)
 
         mask = self._get_mask(part_sol, init_sol, stack)
 
