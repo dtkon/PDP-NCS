@@ -59,7 +59,6 @@ class MultiHeadAttention(nn.Module):
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -74,7 +73,6 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[torch.Tensor] = None,
         with_norm: bool = False,
     ) -> torch.Tensor:
-
         if self.in_val_dim is None:  # calculate attention score
             assert v is None
 
@@ -108,8 +106,10 @@ class MultiHeadAttention(nn.Module):
         compatibility = torch.matmul(Q, K.transpose(2, 3))
 
         if mask is not None:
-            mask = mask[None, :, None, :] # (batch_size, n_key)
-            mask = mask.repeat(self.n_heads, 1, n_query, 1) # (n_heads, batch_size, n_query, n_key)
+            mask = mask[None, :, None, :]  # (batch_size, n_key)
+            mask = mask.repeat(
+                self.n_heads, 1, n_query, 1
+            )  # (n_heads, batch_size, n_query, n_key)
             compatibility[mask] = -1e20
 
         if v is None and not with_norm:
@@ -179,7 +179,6 @@ class MLP(nn.Module):
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -208,7 +207,6 @@ class CriticDecoder(nn.Module):
     __call__: Callable[..., torch.Tensor]
 
     def forward(self, y: torch.Tensor, best_cost: torch.Tensor) -> torch.Tensor:
-
         # h_wave: (batch_size, graph_size+1, input_size)
         mean_pooling = y.mean(1)  # mean Pooling (batch_size, input_size)
         graph_feature: torch.Tensor = self.project_graph(mean_pooling)[
@@ -272,7 +270,6 @@ class NodePairRemovalDecoder(nn.Module):  # (12) (13)
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -285,7 +282,6 @@ class NodePairRemovalDecoder(nn.Module):  # (12) (13)
         solution: torch.Tensor,  # if solution=[2,0,1], means 0->2->1->0.
         selection_recent: torch.Tensor,  # (batch_size, 4, graph_size/2)
     ) -> torch.Tensor:
-
         pre = solution.argsort()  # pre=[1,2,0]
         post = solution  # post=[2,0,1]
 
@@ -446,7 +442,6 @@ class NodePairReinsertionDecoder(nn.Module):  # (14) (15)
         self.agg = MLP(4 * n_heads, 32, 32, 1, 0)
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -460,7 +455,6 @@ class NodePairReinsertionDecoder(nn.Module):  # (14) (15)
         pos_delivery: torch.Tensor,  # (batch_size)
         solution: torch.Tensor,  # (batch, graph_size+1)
     ) -> torch.Tensor:
-
         batch_size, graph_size_plus1, input_dim = h_hat.size()
         shp = (batch_size, graph_size_plus1, graph_size_plus1, self.n_heads)
         shp_p = (batch_size, -1, 1, self.n_heads)
@@ -537,7 +531,6 @@ class N2SDecoder(nn.Module):
         self.project_node = nn.Linear(self.input_dim, self.input_dim, bias=False)
 
     def init_parameters(self):
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -557,7 +550,6 @@ class N2SDecoder(nn.Module):
         fixed_action: Optional[torch.Tensor],
         require_entropy: bool,
     ):
-
         batch_size, graph_size_plus1, input_dim = h_wave.size()
         half_pos = (graph_size_plus1 - 1) // 2
 
@@ -803,7 +795,6 @@ class Syn_Att(nn.Module):  # (6) - (10)
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -813,7 +804,6 @@ class Syn_Att(nn.Module):  # (6) - (10)
     def forward(
         self, h_fea: torch.Tensor, aux_att_score: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
         # h should be (batch_size, n_query, input_dim)
         batch_size, n_query, input_dim = h_fea.size()
 
@@ -869,7 +859,6 @@ class Normalization(nn.Module):
         # self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for name, param in self.named_parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -930,7 +919,6 @@ class FFNormSubLayer(nn.Module):
     __call__: Callable[..., torch.Tensor]
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-
         # FF and Residual connection
         out = self.FF(input)
         # Normalization
@@ -984,7 +972,6 @@ class EmbeddingNet(nn.Module):
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -1000,7 +987,6 @@ class EmbeddingNet(nn.Module):
     def _cyclic_position_embedding_pattern(
         self, seq_length: int, embedding_dim: int, mean_pooling: bool = True
     ) -> torch.Tensor:
-
         Td_base = np.power(seq_length, 1 / (embedding_dim // 2))
         Td_set = np.linspace(Td_base, seq_length, embedding_dim // 2, dtype='int')
         g = np.zeros((seq_length, embedding_dim))
@@ -1178,8 +1164,12 @@ class ConstructEncoder(nn.Module):
 
 class ConstructDecoder(nn.Module):
     def __init__(
-        self, n_heads: int, input_dim: int, stack_is_lifo: bool, type_select: str,
-        use_lifo_decoder: bool = False
+        self,
+        n_heads: int,
+        input_dim: int,
+        stack_is_lifo: bool,
+        type_select: str,
+        use_lifo_decoder: bool = False,
     ) -> None:
         super().__init__()
 
@@ -1238,7 +1228,7 @@ class ConstructDecoder(nn.Module):
             torch.tanh(self.second_SHA_score(hc, h_fea, with_norm=True)) * self.C
         ).view(batch_size, -1)
         uc /= temperature
-        
+
         uc[mask] = -1e20
 
         prob = F.softmax(uc, dim=-1)
@@ -1410,7 +1400,6 @@ class HeterAttention(nn.Module):
         self.init_parameters()
 
     def init_parameters(self) -> None:
-
         for param in self.parameters():
             stdv = 1.0 / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)

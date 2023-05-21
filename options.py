@@ -49,7 +49,7 @@ class Option(argparse.Namespace):
     save_infer_dir: str
     zoom: bool
     use_lifo_decoder: bool
-    
+
     # dynamic
     start_init_sample_epoch: int
     sc_map_sample_times: int
@@ -312,7 +312,9 @@ def get_options(args: Optional[List[str]] = None) -> Option:
         '--save_infer_dir', help='save costs_history and search_history'
     )
     parser.add_argument('--zoom', action='store_true', help='zoom')
-    parser.add_argument('--use_lifo_decoder', action='store_true', help='use_lifo_decoder')
+    parser.add_argument(
+        '--use_lifo_decoder', action='store_true', help='use_lifo_decoder'
+    )
 
     # overall settings
     parser.add_argument(

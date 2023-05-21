@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 
 class mySequential(nn.Sequential):
-
     __call__: Callable[..., Union[Tuple[torch.Tensor], torch.Tensor]]
 
     def forward(
@@ -183,7 +182,7 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
         type_select: str,
         embedding_type: str,
         attn_type: str,
-        use_lifo_decoder: bool
+        use_lifo_decoder: bool,
     ) -> None:
         super().__init__()
 
@@ -227,7 +226,6 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
         temperature: float = 1,
         only_fea: bool = False,
     ):
-
         if self.embedder is None:  # share
             h_fea = self.agent.actor(None, x_in, None, None, None, only_fea=True)[0]
         else:

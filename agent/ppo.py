@@ -69,7 +69,7 @@ class PPO(Agent):
                 opts.sc_decoder_select_type,
                 opts.embed_type_sc,
                 opts.sc_attn_type,
-                opts.use_lifo_decoder
+                opts.use_lifo_decoder,
             )
             self.critic_construct = Critic_Construct()
 
