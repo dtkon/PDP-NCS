@@ -32,11 +32,22 @@ class MultiHeadAttention(nn.Module):
     def __init__(
         self,
         n_heads: int,
-        in_query_dim: int,
+        in_query_dim: Optional[int],
         in_key_dim: int,
         in_val_dim: Optional[int],
         out_dim: int,
+        enable_cache: bool = False,
+        trainable: bool = True,
     ) -> None:
+        '''
+        in_query_dim: None means q won't be linear projected.
+
+        in_val_dim: None means won't need v and only compute attention score.
+
+        enable_cache: Whether net will notice k and v are identical with last call, turn it on to save memory if there are large number of repeated k and v.
+
+        trainable: set False to be used in hyper-network.
+        '''
         super().__init__()
 
         hidden_dim = out_dim // n_heads
@@ -50,18 +61,39 @@ class MultiHeadAttention(nn.Module):
 
         self.norm_factor = 1 / math.sqrt(hidden_dim)  # See Attention is all you need
 
-        self.W_query = nn.Parameter(torch.Tensor(n_heads, in_query_dim, hidden_dim))
-        self.W_key = nn.Parameter(torch.Tensor(n_heads, in_key_dim, hidden_dim))
-        if in_val_dim is not None:  # else calculate attention score
-            self.W_val = nn.Parameter(torch.Tensor(n_heads, in_val_dim, hidden_dim))
-            self.W_out = nn.Parameter(torch.Tensor(n_heads, hidden_dim, out_dim))
+        if trainable:
+            if in_query_dim is not None:
+                self.W_query = nn.Parameter(
+                    torch.zeros(n_heads, in_query_dim, hidden_dim)
+                )
 
-        self.init_parameters()
+            self.W_key = nn.Parameter(torch.zeros(n_heads, in_key_dim, hidden_dim))
 
-    def init_parameters(self) -> None:
-        for param in self.parameters():
-            stdv = 1.0 / math.sqrt(param.size(-1))
-            param.data.uniform_(-stdv, stdv)
+            if in_val_dim is not None:  # else calculate attention score
+                self.W_val = nn.Parameter(torch.zeros(n_heads, in_val_dim, hidden_dim))
+                self.W_out = nn.Parameter(torch.zeros(n_heads, hidden_dim, out_dim))
+        else:
+            if in_query_dim is not None:
+                self.W_query = torch.zeros(n_heads, in_query_dim, hidden_dim)
+
+            self.W_key = torch.zeros(n_heads, in_key_dim, hidden_dim)
+
+            if in_val_dim is not None:  # else calculate attention score
+                self.W_val = torch.zeros(n_heads, in_val_dim, hidden_dim)
+                self.W_out = torch.zeros(n_heads, hidden_dim, out_dim)
+
+        # cache
+        self.enable_cache = enable_cache
+        self.k_last = None
+        self.v_last = None
+        self.K_cached = None
+        self.V_cached = None
+
+    def clear_cache(self) -> None:
+        self.k_last = None
+        self.v_last = None
+        self.K_cached = None
+        self.V_cached = None
 
     __call__: Callable[..., torch.Tensor]
 
@@ -71,8 +103,17 @@ class MultiHeadAttention(nn.Module):
         k: torch.Tensor,
         v: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
-        with_norm: bool = False,
+        with_norm: bool = True,
     ) -> torch.Tensor:
+        '''
+        q: (batch_size, n_query, in_que_dim)
+
+        k: (batch_size, n_key, in_key_dim)
+
+        v: (batch_size, n_key, in_val_dim)
+
+        mask: (batch_size, n_key)
+        '''
         if self.in_val_dim is None:  # calculate attention score
             assert v is None
 
@@ -82,28 +123,47 @@ class MultiHeadAttention(nn.Module):
         if v is not None:
             in_val_dim = v.size(2)
 
-        qflat = q.contiguous().view(
-            -1, in_que_dim
-        )  # (batch_size * n_query, in_que_dim)
-        kflat = k.contiguous().view(-1, in_key_dim)  # (batch_size * n_key, in_key_dim)
-        if v is not None:
-            vflat = v.contiguous().view(-1, in_val_dim)
+        if self.in_query_dim is not None:
+            qflat = q.contiguous().view(
+                -1, in_que_dim
+            )  # (batch_size * n_query, in_que_dim)
+            shp_Q = (self.n_heads, batch_size, n_query, self.hidden_dim)
 
-        shp_q = (self.n_heads, batch_size, n_query, self.hidden_dim)
-        shp_kv = (self.n_heads, batch_size, n_key, self.hidden_dim)
-
-        # Calculate queries, (n_heads, batch_size, n_query, hidden_dim)
-        Q = torch.matmul(qflat, self.W_query).view(shp_q)
-        # self.W_que: (n_heads, in_que_dim, hidden_dim)
-        # Q_before_view: (n_heads, batch_size * n_query, hidden_dim)
+            # Calculate queries, (n_heads, batch_size, n_query, hidden_dim)
+            Q = torch.matmul(qflat, self.W_query).view(shp_Q)
+            # self.W_query: (n_heads, in_que_dim, hidden_dim)
+            # Q_before_view: (n_heads, batch_size * n_query, hidden_dim)
+        else:
+            assert in_que_dim == self.out_dim
+            Q = q.view(batch_size, n_query, self.hidden_dim, self.n_heads).permute(
+                3, 0, 1, 2
+            )
 
         # Calculate keys and values (n_heads, batch_size, n_key, hidden_dim)
-        K = torch.matmul(kflat, self.W_key).view(shp_kv)
+        if k is self.k_last:
+            K = self.K_cached
+        else:
+            shp_KV = (self.n_heads, batch_size, n_key, self.hidden_dim)
+            kflat = k.contiguous().view(
+                -1, in_key_dim
+            )  # (batch_size * n_key, in_key_dim)
+            K = torch.matmul(kflat, self.W_key).view(shp_KV)
+        if self.enable_cache:
+            self.K_cached = K
+            self.k_last = k
+
         if v is not None:
-            V = torch.matmul(vflat, self.W_val).view(shp_kv)
+            if v is self.v_last:
+                V = self.V_cached
+            else:
+                vflat = v.contiguous().view(-1, in_val_dim)
+                V = torch.matmul(vflat, self.W_val).view(shp_KV)
+                if self.enable_cache:
+                    self.V_cached = V
+                    self.v_last = v
 
         # Calculate compatibility (n_heads, batch_size, n_query, n_key)
-        compatibility = torch.matmul(Q, K.transpose(2, 3))
+        compatibility = torch.matmul(Q, K.transpose(2, 3))  # type: ignore
 
         if mask is not None:
             mask = mask[None, :, None, :]  # (batch_size, n_key)
@@ -1181,15 +1241,30 @@ class ConstructDecoder(nn.Module):
 
         if stack_is_lifo and use_lifo_decoder:
             self.first_MHA = MultiHeadAttention(
-                n_heads, 3 * input_dim, input_dim, input_dim, input_dim
+                n_heads,
+                3 * input_dim,
+                input_dim,
+                input_dim,
+                input_dim,
+                enable_cache=True,
             )
         else:
             self.first_MHA = MultiHeadAttention(
-                n_heads, 2 * input_dim, input_dim, input_dim, input_dim
+                n_heads,
+                2 * input_dim,
+                input_dim,
+                input_dim,
+                input_dim,
+                enable_cache=True,
             )
 
         self.second_SHA_score = MultiHeadAttention(
-            1, input_dim, input_dim, None, input_dim
+            1,
+            input_dim,
+            input_dim,
+            None,
+            input_dim,
+            enable_cache=True,
         )
 
     __call__: Callable[..., Tuple[torch.Tensor, torch.Tensor]]
