@@ -391,7 +391,13 @@ class PPO(Agent):
             )
         else:
             validate(
-                0, problem, self, val_dataset, tb_logger, distributed=False, zoom=zoom
+                0,
+                problem,
+                self,
+                val_dataset,
+                tb_logger,
+                init_distributed=False,
+                zoom=zoom,
             )
 
     def start_training(
@@ -502,20 +508,20 @@ def train(
 
     # check cuda memory
     if opts.use_cuda:
-        if rank == 0:
-            training_dataset_test = PDP.make_dataset(
-                size=opts.graph_size,
-                num_samples=opts.batch_size // opts.world_size,
-                silence=True,
-            )
-            training_dataloader_test = DataLoader(
-                training_dataset_test,
-                batch_size=opts.batch_size // opts.world_size,
-                shuffle=False,
-                num_workers=0,
-                pin_memory=True,
-            )
-            mem_test(agent, problem, next(iter(training_dataloader_test)))
+        # if rank == 0:
+        training_dataset_test = PDP.make_dataset(
+            size=opts.graph_size,
+            num_samples=opts.batch_size // opts.world_size,
+            silence=True,
+        )
+        training_dataloader_test = DataLoader(
+            training_dataset_test,
+            batch_size=opts.batch_size // opts.world_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+        )
+        mem_test(rank, agent, problem, next(iter(training_dataloader_test)))
     if opts.distributed:
         dist.barrier()
 

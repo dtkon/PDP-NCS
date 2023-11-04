@@ -27,7 +27,7 @@ def validate(
     agent: Agent,
     val_dataset_str: Optional[str] = None,
     tb_logger: Optional[TbLogger] = None,
-    distributed: bool = False,
+    init_distributed: bool = False,
     id_: Optional[int] = None,
     mem_test: bool = False,
     zoom: bool = False,
@@ -56,7 +56,7 @@ def validate(
         silence=mem_test,
     )
 
-    if distributed:
+    if opts.distributed and init_distributed:
         device = torch.device("cuda", rank)
         torch.distributed.init_process_group(
             backend='nccl', world_size=opts.world_size, rank=rank
@@ -90,6 +90,7 @@ def validate(
                 )
             )
 
+    if opts.distributed:
         assert opts.val_batch_size % opts.world_size == 0
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             val_dataset, shuffle=False
@@ -137,7 +138,7 @@ def validate(
     best_hist = torch.cat(best_hist_list, 0)
     r = torch.cat(r_list, 0)
 
-    if distributed:
+    if opts.distributed:
         dist.barrier()
 
         initial_cost = gather_tensor_and_concat(cost_hist[:, 0].contiguous())
@@ -200,7 +201,7 @@ def validate(
     torch.cuda.set_rng_state(random_state_backup[1])
     random.setstate(random_state_backup[2])
 
-    if distributed:
+    if opts.distributed:
         dist.barrier()
 
 
@@ -243,7 +244,9 @@ def batch_augments(
         batch['coordinates'] = batch['coordinates'].view(-1, graph_size_plus1, node_dim)
 
 
-def mem_test(agent: Agent, problem: PDP, batch: Dict[str, torch.Tensor]) -> None:
+def mem_test(
+    rank: int, agent: Agent, problem: PDP, batch: Dict[str, torch.Tensor]
+) -> None:
     random_state_backup = (
         torch.get_rng_state(),
         torch.cuda.get_rng_state(),
@@ -265,7 +268,8 @@ def mem_test(agent: Agent, problem: PDP, batch: Dict[str, torch.Tensor]) -> None
     agent.eval()
 
     if opts.shared_critic and not opts.no_sample_init:
-        print('testing memory restriction for init construct sample...', end=' ')
+        if rank == 0:
+            print('testing memory restriction for init construct sample...', end=' ')
         train_sample_size = min(opts.max_init_sample_size, opts.max_init_sample_batch)
 
         ms_batch_feature = batch_feature.unsqueeze(1).repeat(1, train_sample_size, 1, 1)
@@ -273,9 +277,11 @@ def mem_test(agent: Agent, problem: PDP, batch: Dict[str, torch.Tensor]) -> None
 
         agent.actor_construct(ms_batch_feature)
 
-        print('pass')
+        if rank == 0:
+            print('pass')
 
-    print('testing memory restriction for validate...', end=' ')
+    if rank == 0:
+        print('testing memory restriction for validate...', end=' ')
 
     opts_backup = opts.T_max, opts.inference_sample_size
     opts.T_max = 1
@@ -285,7 +291,8 @@ def mem_test(agent: Agent, problem: PDP, batch: Dict[str, torch.Tensor]) -> None
     validate(0, problem, agent, mem_test=True)
     opts.T_max, opts.inference_sample_size = opts_backup
 
-    print('pass')
+    if rank == 0:
+        print('pass')
 
     torch.set_rng_state(random_state_backup[0])
     torch.cuda.set_rng_state(random_state_backup[1])
