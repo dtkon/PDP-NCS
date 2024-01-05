@@ -1,3 +1,5 @@
+_no_major_fix = False
+
 from typing import Callable, Optional, Tuple
 import torch
 import torch.nn.functional as F
@@ -33,20 +35,15 @@ class MultiHeadAttention(nn.Module):
         self,
         n_heads: int,
         in_query_dim: Optional[int],
-        in_key_dim: int,
+        in_key_dim: Optional[int],
         in_val_dim: Optional[int],
         out_dim: int,
-        enable_cache: bool = False,
-        trainable: bool = True,
+        only_score: bool = False,
     ) -> None:
         '''
         in_query_dim: None means q won't be linear projected.
 
-        in_val_dim: None means won't need v and only compute attention score.
-
-        enable_cache: Whether net will notice k and v are identical with last call, turn it on to save memory if there are large number of repeated k and v.
-
-        trainable: set False to be used in hyper-network.
+        only_score: if only compute attention score.
         '''
         super().__init__()
 
@@ -59,41 +56,124 @@ class MultiHeadAttention(nn.Module):
         self.in_key_dim = in_key_dim
         self.in_val_dim = in_val_dim
 
-        self.norm_factor = 1 / math.sqrt(hidden_dim)  # See Attention is all you need
+        self.only_score = only_score
 
-        if trainable:
-            if in_query_dim is not None:
-                self.W_query = nn.Parameter(
-                    torch.zeros(n_heads, in_query_dim, hidden_dim)
-                )
+        # self.norm_factor = 1 / math.sqrt(hidden_dim)  # See Attention is all you need
 
+        self.W_query = None
+        self.W_key = None
+        self.W_val = None
+        self.W_out = None
+
+        if in_query_dim is not None:
+            self.W_query = nn.Parameter(torch.zeros(n_heads, in_query_dim, hidden_dim))
+        if in_key_dim is not None:
             self.W_key = nn.Parameter(torch.zeros(n_heads, in_key_dim, hidden_dim))
+        if in_val_dim is not None and not only_score:
+            self.W_val = nn.Parameter(torch.zeros(n_heads, in_val_dim, hidden_dim))
+        if not only_score:
+            self.W_out = nn.Parameter(torch.zeros(n_heads, hidden_dim, out_dim))
 
-            if in_val_dim is not None:  # else calculate attention score
-                self.W_val = nn.Parameter(torch.zeros(n_heads, in_val_dim, hidden_dim))
-                self.W_out = nn.Parameter(torch.zeros(n_heads, hidden_dim, out_dim))
+    @staticmethod
+    def compute(
+        n_heads: int,
+        hidden_dim: int,
+        out_dim: int,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: Optional[torch.Tensor] = None,
+        W_query: Optional[torch.Tensor] = None,
+        W_key: Optional[torch.Tensor] = None,
+        W_val: Optional[torch.Tensor] = None,
+        W_out: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
+        with_norm: bool = False,
+        only_score: bool = False,
+    ) -> torch.Tensor:
+        batch_size, n_query, in_que_dim = q.size()
+        _, n_key, in_key_dim = k.size()
+
+        if v is not None:
+            _, n_val, in_val_dim = v.size()
+            assert n_key == n_val
+
+        if W_query is not None:
+            qflat = q.contiguous().view(
+                -1, in_que_dim
+            )  # (batch_size * n_query, in_que_dim)
+            shp_Q = (n_heads, batch_size, n_query, hidden_dim)
+
+            # Calculate queries, (n_heads, batch_size, n_query, hidden_dim)
+            Q = torch.matmul(qflat, W_query).view(shp_Q)
+            # self.W_query: (n_heads, in_que_dim, hidden_dim)
+            # Q_before_view: (n_heads, batch_size * n_query, hidden_dim)
         else:
-            if in_query_dim is not None:
-                self.W_query = torch.zeros(n_heads, in_query_dim, hidden_dim)
+            assert in_que_dim == out_dim
+            Q = q.view(batch_size, n_query, hidden_dim, n_heads).permute(3, 0, 1, 2)
 
-            self.W_key = torch.zeros(n_heads, in_key_dim, hidden_dim)
+        # Calculate keys and values (n_heads, batch_size, n_key, hidden_dim)
+        shp_KV = (n_heads, batch_size, n_key, hidden_dim)
 
-            if in_val_dim is not None:  # else calculate attention score
-                self.W_val = torch.zeros(n_heads, in_val_dim, hidden_dim)
-                self.W_out = torch.zeros(n_heads, hidden_dim, out_dim)
+        if W_key is not None:
+            kflat = k.contiguous().view(
+                -1, in_key_dim
+            )  # (batch_size * n_key, in_key_dim)
+            K = torch.matmul(kflat, W_key).view(shp_KV)
+        else:
+            assert in_key_dim == out_dim
+            K = k.view(batch_size, n_key, hidden_dim, n_heads).permute(3, 0, 1, 2)
 
-        # cache
-        self.enable_cache = enable_cache
-        self.k_last = None
-        self.v_last = None
-        self.K_cached = None
-        self.V_cached = None
+        if v is not None:
+            if W_val is not None:
+                vflat = v.contiguous().view(-1, in_val_dim)
+                V = torch.matmul(vflat, W_val).view(shp_KV)
+            else:
+                assert in_val_dim == out_dim
+                V = v.view(batch_size, n_val, hidden_dim, n_heads).permute(3, 0, 1, 2)
 
-    def clear_cache(self) -> None:
-        self.k_last = None
-        self.v_last = None
-        self.K_cached = None
-        self.V_cached = None
+        # Calculate compatibility (n_heads, batch_size, n_query, n_key)
+        compatibility = torch.matmul(Q, K.transpose(2, 3))
+
+        if mask is not None:
+            if mask.dim() == 2:
+                mask = mask[None, :, None, :]  # (batch_size, n_key)
+                mask = mask.repeat(
+                    n_heads, 1, n_query, 1
+                )  # (n_heads, batch_size, n_query, n_key)
+            elif mask.dim() == 3:
+                mask = mask[None, :, :, :]  # (batch_size, n_query, n_key)
+                mask = mask.repeat(
+                    n_heads, 1, 1, 1
+                )  # (n_heads, batch_size, n_query, n_key)
+            else:
+                raise NotImplementedError
+            compatibility[mask] = -1e20
+
+        if only_score and not with_norm:
+            return compatibility
+
+        norm_factor = 1 / math.sqrt(hidden_dim)
+        compatibility = norm_factor * compatibility
+
+        if only_score and with_norm:
+            return compatibility
+
+        attn = F.softmax(compatibility, dim=-1)
+
+        heads = torch.matmul(attn, V)  # (n_heads, batch_size, n_query, hidden_dim)
+
+        assert W_out is not None
+
+        out = torch.mm(
+            heads.permute(1, 2, 0, 3)  # (batch_size, n_query, n_heads, hidden_dim)
+            .contiguous()
+            .view(
+                -1, n_heads * hidden_dim
+            ),  # (batch_size * n_query, n_heads * hidden_dim)
+            W_out.view(-1, out_dim),  # (n_heads * hidden_dim, out_dim)
+        ).view(batch_size, n_query, out_dim)
+
+        return out
 
     __call__: Callable[..., torch.Tensor]
 
@@ -103,7 +183,7 @@ class MultiHeadAttention(nn.Module):
         k: torch.Tensor,
         v: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
-        with_norm: bool = True,
+        with_norm: bool = False,
     ) -> torch.Tensor:
         '''
         q: (batch_size, n_query, in_que_dim)
@@ -114,86 +194,24 @@ class MultiHeadAttention(nn.Module):
 
         mask: (batch_size, n_key)
         '''
-        if self.in_val_dim is None:  # calculate attention score
+        if self.only_score:  # calculate attention score
             assert v is None
 
-        batch_size, n_query, in_que_dim = q.size()
-        _, n_key, in_key_dim = k.size()
-
-        if v is not None:
-            in_val_dim = v.size(2)
-
-        if self.in_query_dim is not None:
-            qflat = q.contiguous().view(
-                -1, in_que_dim
-            )  # (batch_size * n_query, in_que_dim)
-            shp_Q = (self.n_heads, batch_size, n_query, self.hidden_dim)
-
-            # Calculate queries, (n_heads, batch_size, n_query, hidden_dim)
-            Q = torch.matmul(qflat, self.W_query).view(shp_Q)
-            # self.W_query: (n_heads, in_que_dim, hidden_dim)
-            # Q_before_view: (n_heads, batch_size * n_query, hidden_dim)
-        else:
-            assert in_que_dim == self.out_dim
-            Q = q.view(batch_size, n_query, self.hidden_dim, self.n_heads).permute(
-                3, 0, 1, 2
-            )
-
-        # Calculate keys and values (n_heads, batch_size, n_key, hidden_dim)
-        if k is self.k_last:
-            K = self.K_cached
-        else:
-            shp_KV = (self.n_heads, batch_size, n_key, self.hidden_dim)
-            kflat = k.contiguous().view(
-                -1, in_key_dim
-            )  # (batch_size * n_key, in_key_dim)
-            K = torch.matmul(kflat, self.W_key).view(shp_KV)
-        if self.enable_cache:
-            self.K_cached = K
-            self.k_last = k
-
-        if v is not None:
-            if v is self.v_last:
-                V = self.V_cached
-            else:
-                vflat = v.contiguous().view(-1, in_val_dim)
-                V = torch.matmul(vflat, self.W_val).view(shp_KV)
-                if self.enable_cache:
-                    self.V_cached = V
-                    self.v_last = v
-
-        # Calculate compatibility (n_heads, batch_size, n_query, n_key)
-        compatibility = torch.matmul(Q, K.transpose(2, 3))  # type: ignore
-
-        if mask is not None:
-            mask = mask[None, :, None, :]  # (batch_size, n_key)
-            mask = mask.repeat(
-                self.n_heads, 1, n_query, 1
-            )  # (n_heads, batch_size, n_query, n_key)
-            compatibility[mask] = -1e20
-
-        if v is None and not with_norm:
-            return compatibility
-
-        compatibility = self.norm_factor * compatibility
-
-        if v is None and with_norm:
-            return compatibility
-
-        attn = F.softmax(compatibility, dim=-1)
-
-        heads = torch.matmul(attn, V)  # (n_heads, batch_size, n_query, hidden_dim)
-
-        out = torch.mm(
-            heads.permute(1, 2, 0, 3)  # (batch_size, n_query, n_heads, hidden_dim)
-            .contiguous()
-            .view(
-                -1, self.n_heads * self.hidden_dim
-            ),  # (batch_size * n_query, n_heads * hidden_dim)
-            self.W_out.view(-1, self.out_dim),  # (n_heads * hidden_dim, out_dim)
-        ).view(batch_size, n_query, self.out_dim)
-
-        return out
+        return self.compute(
+            self.n_heads,
+            self.hidden_dim,
+            self.out_dim,
+            q,
+            k,
+            v,
+            self.W_query,
+            self.W_key,
+            self.W_val,
+            self.W_out,
+            mask,
+            with_norm,
+            self.only_score,
+        )
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -212,7 +230,9 @@ class MultiHeadSelfAttention(nn.Module):
 class MHA_Self_Score_WithoutNorm(nn.Module):
     def __init__(self, n_heads: int, input_dim: int) -> None:
         super().__init__()
-        self.MHA = MultiHeadAttention(n_heads, input_dim, input_dim, None, input_dim)
+        self.MHA = MultiHeadAttention(
+            n_heads, input_dim, input_dim, None, input_dim, only_score=True
+        )
 
     __call__: Callable[..., torch.Tensor]
 
@@ -492,11 +512,11 @@ class NodePairReinsertionDecoder(nn.Module):  # (14) (15)
         self.n_heads = n_heads
 
         self.compater_insert1 = MultiHeadAttention(
-            n_heads, input_dim, input_dim, None, input_dim * n_heads
+            n_heads, input_dim, input_dim, None, input_dim * n_heads, only_score=True
         )
 
         self.compater_insert2 = MultiHeadAttention(
-            n_heads, input_dim, input_dim, None, input_dim * n_heads
+            n_heads, input_dim, input_dim, None, input_dim * n_heads, only_score=True
         )
 
         self.agg = MLP(4 * n_heads, 32, 32, 1, 0)
@@ -1222,6 +1242,47 @@ class ConstructEncoder(nn.Module):
         return self.FFnorm(self.norm(self.MHA(h_fea)))
 
 
+class AM_Decoder_Precompute(nn.Module):
+    def __init__(self, embedding_dim: int, trainable: bool = True) -> None:
+        super().__init__()
+
+        if trainable:
+            self.enc_key_proj = nn.Parameter(torch.zeros(embedding_dim, embedding_dim))
+            self.enc_val_proj = nn.Parameter(torch.zeros(embedding_dim, embedding_dim))
+            self.enc_key_for_glimpse_proj = nn.Parameter(
+                torch.zeros(embedding_dim, embedding_dim)
+            )
+        else:
+            self.enc_key_proj = torch.zeros(embedding_dim, embedding_dim)
+            self.enc_val_proj = torch.zeros(embedding_dim, embedding_dim)
+            self.enc_key_for_glimpse_proj = torch.zeros(embedding_dim, embedding_dim)
+
+    @staticmethod
+    def compute(
+        graph_embedding: torch.Tensor,
+        enc_key_proj: torch.Tensor,
+        enc_val_proj: torch.Tensor,
+        enc_key_for_glimpse_proj: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        proj_key = F.linear(graph_embedding, enc_key_proj)
+        proj_val = F.linear(graph_embedding, enc_val_proj)
+        proj_key_for_glimpse = F.linear(graph_embedding, enc_key_for_glimpse_proj)
+
+        return proj_key, proj_val, proj_key_for_glimpse
+
+    __call__: Callable[..., Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+
+    def forward(
+        self, graph_embedding: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.compute(
+            graph_embedding,
+            self.enc_key_proj,
+            self.enc_val_proj,
+            self.enc_key_for_glimpse_proj,
+        )
+
+
 class ConstructDecoder(nn.Module):
     def __init__(
         self,
@@ -1241,30 +1302,15 @@ class ConstructDecoder(nn.Module):
 
         if stack_is_lifo and use_lifo_decoder:
             self.first_MHA = MultiHeadAttention(
-                n_heads,
-                3 * input_dim,
-                input_dim,
-                input_dim,
-                input_dim,
-                enable_cache=True,
+                n_heads, 3 * input_dim, None, None, input_dim
             )
         else:
             self.first_MHA = MultiHeadAttention(
-                n_heads,
-                2 * input_dim,
-                input_dim,
-                input_dim,
-                input_dim,
-                enable_cache=True,
+                n_heads, 2 * input_dim, None, None, input_dim
             )
 
         self.second_SHA_score = MultiHeadAttention(
-            1,
-            input_dim,
-            input_dim,
-            None,
-            input_dim,
-            enable_cache=True,
+            1, None, None, None, input_dim, only_score=True
         )
 
     __call__: Callable[..., Tuple[torch.Tensor, torch.Tensor]]
@@ -1273,6 +1319,9 @@ class ConstructDecoder(nn.Module):
         self,
         h_fea: torch.Tensor,
         h_mean: torch.Tensor,
+        proj_key: torch.Tensor,
+        proj_val: torch.Tensor,
+        proj_key_for_glimpse: torch.Tensor,
         part_sol: torch.Tensor,
         init_sol: torch.Tensor,
         step: int,
@@ -1298,9 +1347,12 @@ class ConstructDecoder(nn.Module):
 
         mask = self._get_mask(part_sol, init_sol, stack)
 
-        hc = self.first_MHA(context_emb, h_fea, h_fea, mask=mask)
+        hc = self.first_MHA(
+            context_emb, proj_key, proj_val, mask=None if _no_major_fix else mask
+        )
         uc = (
-            torch.tanh(self.second_SHA_score(hc, h_fea, with_norm=True)) * self.C
+            torch.tanh(self.second_SHA_score(hc, proj_key_for_glimpse, with_norm=True))
+            * self.C
         ).view(batch_size, -1)
         uc /= temperature
 

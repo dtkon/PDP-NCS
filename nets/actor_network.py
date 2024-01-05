@@ -13,6 +13,7 @@ from .graph_layers import (
     ConstructEncoder,
     ConstructDecoder,
     HeterEmbedding,
+    AM_Decoder_Precompute,
 )
 
 if TYPE_CHECKING:
@@ -208,6 +209,8 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
             n_heads, embedding_dim, self.stack_is_lifo, type_select, use_lifo_decoder
         )
 
+        self.precomputing = AM_Decoder_Precompute(embedding_dim)
+
         self.init_parameters()
 
         print('Actor_SC:', self.get_parameter_number())
@@ -237,6 +240,8 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
         hN: torch.Tensor = self.encoder(h_fea)
         hN_mean = hN.mean(1)
 
+        proj_key, proj_val, proj_key_for_glimpse = self.precomputing(hN)
+
         batch_size, graph_size_plus1, _ = h_fea.size()
 
         init_sol = (
@@ -258,6 +263,9 @@ class Actor_Construct(nn.Module):  # kool suggest 8 heads and 128 dim
             cur_sol, log_p = self.decoder(
                 hN,
                 hN_mean,
+                proj_key,
+                proj_val,
+                proj_key_for_glimpse,
                 cur_sol,
                 init_sol,
                 step,
