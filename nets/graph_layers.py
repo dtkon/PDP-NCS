@@ -1,3 +1,5 @@
+_no_major_fix = True
+
 from typing import Callable, Optional, Tuple
 import torch
 import torch.nn.functional as F
@@ -103,7 +105,7 @@ class MultiHeadAttention(nn.Module):
         k: torch.Tensor,
         v: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
-        with_norm: bool = True,
+        with_norm: bool = False,
     ) -> torch.Tensor:
         '''
         q: (batch_size, n_query, in_que_dim)
@@ -1298,7 +1300,9 @@ class ConstructDecoder(nn.Module):
 
         mask = self._get_mask(part_sol, init_sol, stack)
 
-        hc = self.first_MHA(context_emb, h_fea, h_fea, mask=mask)
+        hc = self.first_MHA(
+            context_emb, h_fea, h_fea, mask=None if _no_major_fix else mask
+        )
         uc = (
             torch.tanh(self.second_SHA_score(hc, h_fea, with_norm=True)) * self.C
         ).view(batch_size, -1)
