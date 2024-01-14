@@ -78,6 +78,8 @@ class Option(argparse.Namespace):
     ff_hidden_dim: int
     n_encode_layers: int
     normalization: str
+    K_train: int
+    K_val: int
 
     # Training parameters
     RL_agent: str
@@ -387,6 +389,8 @@ def get_options(args: Optional[List[str]] = None) -> Option:
         default='layer',
         help="normalization type, 'layer' (default) or 'batch'",
     )
+    parser.add_argument('--K_train', type=int, default=-1, help='action history length')
+    parser.add_argument('--K_val', type=int, default=-1, help='action history length')
 
     # Training parameters
     parser.add_argument(
@@ -602,6 +606,11 @@ def get_options(args: Optional[List[str]] = None) -> Option:
             opts.val_dataset = './datasets/pdp_50.pkl'
         elif opts.graph_size == 100:
             opts.val_dataset = './datasets/pdp_100.pkl'
+
+    if opts.K_train == -1:
+        opts.K_train = opts.graph_size
+    if opts.K_val:
+        opts.K_val = opts.graph_size // 2
 
     ### figure out whether to use distributed training
     opts.world_size = torch.cuda.device_count()

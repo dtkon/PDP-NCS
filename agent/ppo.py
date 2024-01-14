@@ -319,7 +319,7 @@ class PPO(Agent):
         action = None
         action_removal_record = [
             torch.zeros((batch_feature.size(0), problem.size // 2))
-            for _ in range(problem.size // 2)  # N2S paper section 4.4 last sentence
+            for _ in range(self.opts.K_val)  # N2S paper section 4.4 last sentence
         ]
 
         for _ in tqdm(
@@ -674,7 +674,7 @@ def train_batch(
 
     action_removal_record = [
         torch.zeros((batch_feature.size(0), problem.size // 2))
-        for _ in range(problem.size)  # N2S paper section 4.4 last sentence
+        for _ in range(opts.K_train)  # N2S paper section 4.4 last sentence
     ]
 
     # initial solution
