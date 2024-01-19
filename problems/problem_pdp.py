@@ -141,10 +141,11 @@ class PDP(ABC):
         batch_size = solution.size(0)
         pre_best_obj = pre_best_obj.view(batch_size, -1)
 
-        action_removal_record = action_removal_record.copy()
-        cur_vec = torch.zeros_like(action_removal_record.pop(0))  # new tensor
-        cur_vec[torch.arange(batch_size), action[:, 0]] = 1
-        action_removal_record.append(cur_vec)
+        if len(action_removal_record) != 0:
+            action_removal_record = action_removal_record.copy()
+            cur_vec = torch.zeros_like(action_removal_record.pop(0))  # new tensor
+            cur_vec[torch.arange(batch_size), action[:, 0]] = 1
+            action_removal_record.append(cur_vec)
 
         selected_minus1 = action[:, 0].view(batch_size, 1)
         first = action[:, 1].view(batch_size, 1)

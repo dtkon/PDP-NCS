@@ -93,18 +93,21 @@ class Actor_N2S(nn.Module):
 
     @staticmethod
     def _get_action_removal_recent(
-        action_removal_record: List[torch.Tensor],
+        action_removal_record: List[torch.Tensor], x_in: torch.Tensor
     ) -> torch.Tensor:
-        action_removal_record_tensor = torch.stack(
-            action_removal_record
-        )  # (len_action_record, batch_size, graph_size/2)
-        return torch.cat(
-            (
-                action_removal_record_tensor[-3:].transpose(0, 1),
-                action_removal_record_tensor.mean(0).unsqueeze(1),
-            ),
-            1,
-        )  # (batch_size, 4, graph_size/2)
+        if len(action_removal_record) >= 3:
+            action_removal_record_tensor = torch.stack(
+                action_removal_record
+            )  # (len_action_record, batch_size, graph_size/2)
+            return torch.cat(
+                (
+                    action_removal_record_tensor[-3:].transpose(0, 1),
+                    action_removal_record_tensor.mean(0).unsqueeze(1),
+                ),
+                1,
+            )  # (batch_size, 4, graph_size/2)
+        else:
+            return torch.zeros((x_in.size(0), 4, x_in.size(1) // 2))
 
     __call__: Callable[
         ..., Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
@@ -124,7 +127,7 @@ class Actor_N2S(nn.Module):
         only_fea: bool = False,
     ):
         # the embedded input x
-        # batch_size, graph_size+1, node_dim = x_in.size()
+        # batch_size, graph_size_puls1, node_dim = x_in.size()
 
         if only_fea:
             h_fea = self.embedder(x_in, None, False)[0]
@@ -154,7 +157,7 @@ class Actor_N2S(nn.Module):
             visit_index=visit_index,
             pre_action=pre_action,
             selection_recent=Actor_N2S._get_action_removal_recent(
-                action_removal_record
+                action_removal_record, x_in
             ).to(x_in.device),
             fixed_action=fixed_action,
             require_entropy=require_entropy,
