@@ -609,7 +609,7 @@ def get_options(args: Optional[List[str]] = None) -> Option:
 
     if opts.K_train == -1:
         opts.K_train = opts.graph_size
-    if opts.K_val:
+    if opts.K_val == -1:
         opts.K_val = opts.graph_size // 2
 
     ### figure out whether to use distributed training
