@@ -91,6 +91,13 @@ class MultiHeadAttention(nn.Module):
         self.K_cached = None
         self.V_cached = None
 
+        self.init_parameters()
+
+    def init_parameters(self) -> None:
+        for param in self.parameters():
+            stdv = 1.0 / math.sqrt(param.size(-1))
+            param.data.uniform_(-stdv, stdv)
+
     def clear_cache(self) -> None:
         self.k_last = None
         self.v_last = None
