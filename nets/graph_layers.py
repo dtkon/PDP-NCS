@@ -74,6 +74,13 @@ class MultiHeadAttention(nn.Module):
         if not only_score:
             self.W_out = nn.Parameter(torch.zeros(n_heads, hidden_dim, out_dim))
 
+        self.init_parameters()
+
+    def init_parameters(self) -> None:
+        for param in self.parameters():
+            stdv = 1.0 / math.sqrt(param.size(-1))
+            param.data.uniform_(-stdv, stdv)
+
     @staticmethod
     def compute(
         n_heads: int,
