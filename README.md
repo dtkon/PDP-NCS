@@ -2,7 +2,7 @@
 
 This repo implements our paper:
 
-Detian Kong, Yining Ma, Zhiguang Cao, Tianshu Yu and Jianhua Xiao, "Efficient Neural Collaborative Search for Pickup and Delivery Problems".
+Detian Kong, Yining Ma, Zhiguang Cao, Tianshu Yu and Jianhua Xiao, "[Efficient Neural Collaborative Search for Pickup and Delivery Problems](https://www.researchgate.net/publication/383328030_Efficient_Neural_Collaborative_Search_for_Pickup_and_Delivery_Problems)" in the IEEE Transactions on Pattern Analysis and Machine Intelligence.
 
 ## Dependencies
 * Python>=3.8
