@@ -10,7 +10,12 @@ Detian Kong, Yining Ma, Zhiguang Cao, Tianshu Yu and Jianhua Xiao, "[Efficient N
   author={Kong, Detian and Ma, Yining and Cao, Zhiguang and Yu, Tianshu and Xiao, jianhua},
   journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
   year={2024},
-  publisher={IEEE}
+  publisher={IEEE},
+  volume={46},
+  number={12},
+  pages={11019-11034},
+  keywords={Computational modeling;Collaboration;Modeling;Biological system modeling;Search problems;Decoding;Training;Attention mechanism;deep reinforcement learning;learning to optimize;neighborhood search;pickup and delivery},
+  doi={10.1109/TPAMI.2024.3450850}
 }
 ``` 
 
